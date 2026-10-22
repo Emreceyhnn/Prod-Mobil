@@ -14,16 +14,20 @@ import { supabase, toFriendlyDbError } from "../services/supabase";
 import GlassCard from "../components/GlassCard";
 import AddExpenseModal from "../components/AddExpenseModal";
 import QuickButtonEditorModal from "../components/QuickButtonEditorModal";
+import BudgetEditorModal from "../components/BudgetEditorModal";
 import { colors, spacing, typography, radius } from "../theme/colors";
 import { getQuickButtons } from "../services/quickExpenseService";
+import { getBudgets, evaluateBudgets } from "../services/budgetService";
 
 export default function FinanceScreen() {
   const { user } = useAuth();
   const [expenses, setExpenses] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
   const [quickButtons, setQuickButtons] = useState([]);
+  const [budgets, setBudgets] = useState({});
   const [addModalVisible, setAddModalVisible] = useState(false);
   const [editorModalVisible, setEditorModalVisible] = useState(false);
+  const [budgetModalVisible, setBudgetModalVisible] = useState(false);
   const [savingQuickId, setSavingQuickId] = useState(null);
 
   const loadExpenses = useCallback(async () => {
@@ -46,14 +50,21 @@ export default function FinanceScreen() {
     setQuickButtons(buttons);
   }, []);
 
+  const loadBudgets = useCallback(async () => {
+    if (!user) return;
+    const data = await getBudgets(user.id);
+    setBudgets(data);
+  }, [user]);
+
   useEffect(() => {
     loadExpenses();
     loadQuickButtons();
-  }, [loadExpenses, loadQuickButtons]);
+    loadBudgets();
+  }, [loadExpenses, loadQuickButtons, loadBudgets]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await Promise.all([loadExpenses(), loadQuickButtons()]);
+    await Promise.all([loadExpenses(), loadQuickButtons(), loadBudgets()]);
     setRefreshing(false);
   };
 
@@ -88,10 +99,14 @@ export default function FinanceScreen() {
     }
   };
 
-  const { income, outcome, net, categoryTotals } = useMemo(() => {
+  const { income, outcome, net, categoryTotals, categoryTotalsThisMonth } = useMemo(() => {
     let income = 0;
     let outcome = 0;
     const categoryTotals = {};
+    const categoryTotalsThisMonth = {};
+
+    const now = new Date();
+    const currentMonthKey = `${now.getFullYear()}-${now.getMonth()}`;
 
     for (const item of expenses) {
       const amount = Number(item.amount);
@@ -101,15 +116,26 @@ export default function FinanceScreen() {
         outcome += Math.abs(amount);
         const cat = item.category || "Diğer";
         categoryTotals[cat] = (categoryTotals[cat] || 0) + Math.abs(amount);
+
+        const itemDate = new Date(item.created_at);
+        const itemMonthKey = `${itemDate.getFullYear()}-${itemDate.getMonth()}`;
+        if (itemMonthKey === currentMonthKey) {
+          categoryTotalsThisMonth[cat] = (categoryTotalsThisMonth[cat] || 0) + Math.abs(amount);
+        }
       }
     }
 
-    return { income, outcome, net: income - outcome, categoryTotals };
+    return { income, outcome, net: income - outcome, categoryTotals, categoryTotalsThisMonth };
   }, [expenses]);
 
   const topCategories = Object.entries(categoryTotals)
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
+
+  const budgetStatus = useMemo(
+    () => evaluateBudgets(budgets, categoryTotalsThisMonth),
+    [budgets, categoryTotalsThisMonth]
+  );
 
   return (
     <SafeAreaView style={styles.safe} edges={["top"]}>
@@ -173,9 +199,55 @@ export default function FinanceScreen() {
               </View>
             </GlassCard>
 
+            <GlassCard style={styles.totalCard}>
+              <View style={styles.quickHeader}>
+                <Text style={styles.sectionTitle}>Bütçe Hedefleri (Bu Ay)</Text>
+                <TouchableOpacity onPress={() => setBudgetModalVisible(true)}>
+                  <Text style={styles.quickEdit}>+ Ekle / Düzenle</Text>
+                </TouchableOpacity>
+              </View>
+              {budgetStatus.length === 0 ? (
+                <Text style={styles.empty}>Henüz bütçe hedefi tanımlamadınız.</Text>
+              ) : (
+                budgetStatus.map((b) => (
+                  <View key={b.category} style={styles.budgetRow}>
+                    <View style={styles.budgetHeaderRow}>
+                      <Text style={styles.categoryLabel}>{b.category}</Text>
+                      <Text
+                        style={[
+                          styles.budgetAmount,
+                          { color: b.isOverBudget ? colors.alertCoral : b.isNearLimit ? colors.alertAmber : colors.textPrimary },
+                        ]}
+                      >
+                        ₺{b.spent.toFixed(0)} / ₺{b.limit.toFixed(0)}
+                      </Text>
+                    </View>
+                    <View style={styles.budgetBarTrack}>
+                      <View
+                        style={[
+                          styles.budgetBarFill,
+                          {
+                            width: `${Math.min(b.ratio * 100, 100)}%`,
+                            backgroundColor: b.isOverBudget
+                              ? colors.alertCoral
+                              : b.isNearLimit
+                              ? colors.alertAmber
+                              : colors.metricEmerald,
+                          },
+                        ]}
+                      />
+                    </View>
+                    {b.isOverBudget && (
+                      <Text style={styles.budgetWarning}>⚠️ Bütçe aşıldı</Text>
+                    )}
+                  </View>
+                ))
+              )}
+            </GlassCard>
+
             {topCategories.length > 0 && (
               <GlassCard style={styles.totalCard}>
-                <Text style={styles.sectionTitle}>Kategoriye Göre Harcama</Text>
+                <Text style={styles.sectionTitle}>Kategoriye Göre Harcama (Tüm Zamanlar)</Text>
                 {topCategories.map(([cat, amount]) => (
                   <View key={cat} style={styles.categoryRow}>
                     <Text style={styles.categoryLabel}>{cat}</Text>
@@ -221,6 +293,12 @@ export default function FinanceScreen() {
         visible={editorModalVisible}
         onClose={() => setEditorModalVisible(false)}
         onChanged={loadQuickButtons}
+      />
+      <BudgetEditorModal
+        visible={budgetModalVisible}
+        userId={user?.id}
+        onClose={() => setBudgetModalVisible(false)}
+        onChanged={loadBudgets}
       />
     </SafeAreaView>
   );
@@ -291,6 +369,23 @@ const styles = StyleSheet.create({
   },
   categoryLabel: { ...typography.bodyMd, color: colors.onSurface },
   categoryAmount: { ...typography.labelMd, color: colors.textPrimary, fontWeight: "600" },
+  budgetRow: { marginBottom: spacing.sm },
+  budgetHeaderRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 4,
+  },
+  budgetAmount: { ...typography.labelMd, fontWeight: "600" },
+  budgetBarTrack: {
+    width: "100%",
+    height: 6,
+    borderRadius: radius.full,
+    backgroundColor: colors.surfaceContainerHigh,
+    overflow: "hidden",
+  },
+  budgetBarFill: { height: "100%", borderRadius: radius.full },
+  budgetWarning: { ...typography.bodySm, color: colors.alertCoral, marginTop: 2 },
   row: {
     flexDirection: "row",
     justifyContent: "space-between",
