@@ -3,6 +3,15 @@ import { supabase } from "../services/supabase";
 
 const AuthContext = createContext(null);
 
+function toFriendlyAuthError(error) {
+  if (!error) return error;
+  const message = error.message || "";
+  if (/network request failed|fetch failed|failed to fetch/i.test(message)) {
+    return new Error("Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edin.");
+  }
+  return error;
+}
+
 export function AuthProvider({ children }) {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -30,7 +39,7 @@ export function AuthProvider({ children }) {
 
   const signUp = async (email, password) => {
     const { data, error } = await supabase.auth.signUp({ email, password });
-    if (error) throw error;
+    if (error) throw toFriendlyAuthError(error);
     return data;
   };
 
@@ -39,13 +48,13 @@ export function AuthProvider({ children }) {
       email,
       password,
     });
-    if (error) throw error;
+    if (error) throw toFriendlyAuthError(error);
     return data;
   };
 
   const signOut = async () => {
     const { error } = await supabase.auth.signOut();
-    if (error) throw error;
+    if (error) throw toFriendlyAuthError(error);
   };
 
   return (

@@ -59,6 +59,7 @@ export default ({ config }) => ({
   },
   plugins: [
     "expo-dev-client",
+    "expo-secure-store",
     [
       "expo-notifications",
       {

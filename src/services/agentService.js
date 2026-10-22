@@ -1,25 +1,39 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as SecureStore from "expo-secure-store";
 import { supabase } from "./supabase";
+import { safeFetch } from "./networkUtils";
 
-const AGENT_CONFIG_KEY = "@hepsio/agent_config";
+const AGENT_CONFIG_KEY = "@vela/agent_config";
+const AGENT_API_KEY_SECURE_KEY = "vela_agent_api_key";
 
 /**
  * Kullanıcının kendi AI Agent endpoint + API key bilgisini cihazda saklar.
- * Not: Üretimde hassas anahtarlar için expo-secure-store tercih edilmelidir.
+ * API key, iOS Keychain / Android Keystore üzerinden şifreli tutulur
+ * (expo-secure-store); endpoint ve model gibi hassas olmayan alanlar
+ * AsyncStorage'da düz metin kalır.
  */
 export async function saveAgentConfig({ endpoint, apiKey, model }) {
-  const config = { endpoint, apiKey, model: model || "default" };
+  const config = { endpoint, model: model || "default" };
   await AsyncStorage.setItem(AGENT_CONFIG_KEY, JSON.stringify(config));
-  return config;
+  if (apiKey) {
+    await SecureStore.setItemAsync(AGENT_API_KEY_SECURE_KEY, apiKey);
+  } else {
+    await SecureStore.deleteItemAsync(AGENT_API_KEY_SECURE_KEY).catch(() => {});
+  }
+  return { ...config, apiKey };
 }
 
 export async function getAgentConfig() {
   const raw = await AsyncStorage.getItem(AGENT_CONFIG_KEY);
-  return raw ? JSON.parse(raw) : null;
+  if (!raw) return null;
+  const config = JSON.parse(raw);
+  const apiKey = await SecureStore.getItemAsync(AGENT_API_KEY_SECURE_KEY);
+  return { ...config, apiKey: apiKey || "" };
 }
 
 export async function clearAgentConfig() {
   await AsyncStorage.removeItem(AGENT_CONFIG_KEY);
+  await SecureStore.deleteItemAsync(AGENT_API_KEY_SECURE_KEY).catch(() => {});
 }
 
 /**
@@ -31,7 +45,7 @@ export async function sendMessageToAgent(userId, prompt) {
     throw new Error("Önce Agent ayarlarından bir endpoint ve API anahtarı tanımlamalısınız.");
   }
 
-  const response = await fetch(config.endpoint, {
+  const response = await safeFetch(config.endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -88,7 +102,7 @@ export async function extractExpenseFromImage(userId, base64ImageDataUri) {
     throw new Error("Önce Agent ayarlarından bir endpoint ve API anahtarı tanımlamalısınız.");
   }
 
-  const response = await fetch(config.endpoint, {
+  const response = await safeFetch(config.endpoint, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -106,7 +120,7 @@ export async function extractExpenseFromImage(userId, base64ImageDataUri) {
         },
       ],
     }),
-  });
+  }, 30000);
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");

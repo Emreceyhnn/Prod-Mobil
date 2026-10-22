@@ -9,6 +9,7 @@ import * as Notifications from "expo-notifications";
 import { AuthProvider, useAuth } from "./src/context/AuthContext";
 import AuthNavigator from "./src/navigation/AuthNavigator";
 import MainTabNavigator from "./src/navigation/MainTabNavigator";
+import ErrorBoundary from "./src/components/ErrorBoundary";
 import { colors } from "./src/theme/colors";
 import { subscribeToNotifications } from "./src/services/notificationListenerService";
 
@@ -58,12 +59,14 @@ function RootNavigator() {
 
 export default function App() {
   return (
-    <SafeAreaProvider>
-      <AuthProvider>
-        <StatusBar style="light" />
-        <RootNavigator />
-      </AuthProvider>
-    </SafeAreaProvider>
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <AuthProvider>
+          <StatusBar style="light" />
+          <RootNavigator />
+        </AuthProvider>
+      </SafeAreaProvider>
+    </ErrorBoundary>
   );
 }
 
