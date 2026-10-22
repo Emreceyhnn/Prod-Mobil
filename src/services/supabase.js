@@ -19,3 +19,17 @@ export const supabase = createClient(supabaseUrl, supabaseKey, {
     detectSessionInUrl: false,
   },
 });
+
+/**
+ * Supabase'in ham "Network request failed" / "fetch failed" hatalarını
+ * kullanıcıya anlamlı bir Türkçe mesaja çevirir. Diğer hatalar (RLS,
+ * constraint vb.) olduğu gibi döner.
+ */
+export function toFriendlyDbError(error) {
+  if (!error) return error;
+  const message = error.message || String(error);
+  if (/network request failed|fetch failed|failed to fetch/i.test(message)) {
+    return new Error("Sunucuya ulaşılamadı. İnternet bağlantınızı kontrol edin.");
+  }
+  return error instanceof Error ? error : new Error(message);
+}

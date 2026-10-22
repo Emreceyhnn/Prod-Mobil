@@ -9,7 +9,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
-import { supabase } from "../services/supabase";
+import { supabase, toFriendlyDbError } from "../services/supabase";
 import GlassCard from "../components/GlassCard";
 import { colors, spacing, typography, radius } from "../theme/colors";
 
@@ -51,7 +51,7 @@ export default function HomeScreen() {
       if (stepError) throw stepError;
       setLatestSteps(stepRows?.[0] ?? null);
     } catch (e) {
-      Alert.alert("Veri Yüklenemedi", e.message);
+      Alert.alert("Veri Yüklenemedi", toFriendlyDbError(e).message);
     }
   }, [user]);
 

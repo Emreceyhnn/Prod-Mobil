@@ -10,7 +10,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
-import { supabase } from "../services/supabase";
+import { supabase, toFriendlyDbError } from "../services/supabase";
 import GlassCard from "../components/GlassCard";
 import AddExpenseModal from "../components/AddExpenseModal";
 import QuickButtonEditorModal from "../components/QuickButtonEditorModal";
@@ -35,7 +35,7 @@ export default function FinanceScreen() {
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) {
-      Alert.alert("Hata", error.message);
+      Alert.alert("Hata", toFriendlyDbError(error).message);
       return;
     }
     setExpenses(data || []);
@@ -68,7 +68,7 @@ export default function FinanceScreen() {
       raw_text: payload.raw_text || null,
       created_at: new Date().toISOString(),
     });
-    if (error) throw error;
+    if (error) throw toFriendlyDbError(error);
     await loadExpenses();
   };
 
