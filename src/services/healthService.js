@@ -82,6 +82,51 @@ export function getHeartRateSamples(startDate) {
   });
 }
 
+export function getTodayActiveEnergyBurned() {
+  return new Promise((resolve, reject) => {
+    const options = {
+      startDate: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(),
+      endDate: new Date().toISOString(),
+    };
+    AppleHealthKit.getActiveEnergyBurned(options, (error, results) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      const total = (results || []).reduce((sum, r) => sum + (r.value || 0), 0);
+      resolve(total);
+    });
+  });
+}
+
+export function getLatestBodyFatPercentage() {
+  return new Promise((resolve, reject) => {
+    AppleHealthKit.getLatestBodyFatPercentage(null, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+export function getSleepSamples(startDate) {
+  return new Promise((resolve, reject) => {
+    const options = {
+      startDate: startDate || new Date(Date.now() - 86400000).toISOString(),
+      endDate: new Date().toISOString(),
+    };
+    AppleHealthKit.getSleepSamples(options, (error, results) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(results);
+    });
+  });
+}
+
 export async function syncHealthMetricToSupabase(userId, metricType, value, unit) {
   const { error } = await supabase.from("health_metrics").insert({
     user_id: userId,
@@ -94,7 +139,7 @@ export async function syncHealthMetricToSupabase(userId, metricType, value, unit
 }
 
 export async function syncAllHealthData(userId) {
-  const results = { weight: null, steps: null, errors: [] };
+  const results = { weight: null, steps: null, activeEnergy: null, bodyFat: null, errors: [] };
 
   try {
     const weight = await getLatestWeight();
@@ -116,5 +161,53 @@ export async function syncAllHealthData(userId) {
     results.errors.push("steps: " + e.message);
   }
 
+  try {
+    const activeEnergy = await getTodayActiveEnergyBurned();
+    if (activeEnergy != null) {
+      await syncHealthMetricToSupabase(userId, "active_energy", activeEnergy, "kcal");
+      results.activeEnergy = activeEnergy;
+    }
+  } catch (e) {
+    results.errors.push("active_energy: " + e.message);
+  }
+
+  try {
+    const bodyFat = await getLatestBodyFatPercentage();
+    if (bodyFat?.value) {
+      await syncHealthMetricToSupabase(userId, "body_fat", bodyFat.value * 100, "%");
+      results.bodyFat = bodyFat.value * 100;
+    }
+  } catch (e) {
+    results.errors.push("body_fat: " + e.message);
+  }
+
   return results;
+}
+
+/**
+ * Health ekranında gösterilecek güncel metrikleri HealthKit'ten
+ * doğrudan okur (Supabase'e yazmadan, yalnızca UI için).
+ */
+export async function fetchCurrentHealthSnapshot() {
+  const snapshot = { weight: null, steps: null, activeEnergy: null, bodyFat: null, heartRate: null };
+
+  await Promise.allSettled([
+    getLatestWeight().then((r) => {
+      snapshot.weight = r?.value ?? null;
+    }),
+    getTodayStepCount().then((r) => {
+      snapshot.steps = r?.value ?? null;
+    }),
+    getTodayActiveEnergyBurned().then((v) => {
+      snapshot.activeEnergy = v;
+    }),
+    getLatestBodyFatPercentage().then((r) => {
+      snapshot.bodyFat = r?.value != null ? r.value * 100 : null;
+    }),
+    getHeartRateSamples().then((samples) => {
+      snapshot.heartRate = samples?.[0]?.value ?? null;
+    }),
+  ]);
+
+  return snapshot;
 }

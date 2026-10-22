@@ -16,8 +16,9 @@ import { colors, spacing, typography, radius } from "../theme/colors";
 export default function HomeScreen() {
   const { user } = useAuth();
   const [refreshing, setRefreshing] = useState(false);
-  const [expenseTotal, setExpenseTotal] = useState(0);
+  const [netBalance, setNetBalance] = useState(0);
   const [latestWeight, setLatestWeight] = useState(null);
+  const [latestSteps, setLatestSteps] = useState(null);
 
   const loadDashboard = useCallback(async () => {
     if (!user) return;
@@ -28,17 +29,27 @@ export default function HomeScreen() {
         .eq("user_id", user.id);
       if (expError) throw expError;
       const total = (expenses || []).reduce((sum, e) => sum + Number(e.amount), 0);
-      setExpenseTotal(total);
+      setNetBalance(total);
 
-      const { data: metrics, error: metError } = await supabase
+      const { data: weightRows, error: weightError } = await supabase
         .from("health_metrics")
         .select("value, unit, recorded_at")
         .eq("user_id", user.id)
         .eq("metric_type", "weight")
         .order("recorded_at", { ascending: false })
         .limit(1);
-      if (metError) throw metError;
-      setLatestWeight(metrics?.[0] ?? null);
+      if (weightError) throw weightError;
+      setLatestWeight(weightRows?.[0] ?? null);
+
+      const { data: stepRows, error: stepError } = await supabase
+        .from("health_metrics")
+        .select("value, unit, recorded_at")
+        .eq("user_id", user.id)
+        .eq("metric_type", "steps")
+        .order("recorded_at", { ascending: false })
+        .limit(1);
+      if (stepError) throw stepError;
+      setLatestSteps(stepRows?.[0] ?? null);
     } catch (e) {
       Alert.alert("Veri Yüklenemedi", e.message);
     }
@@ -65,14 +76,23 @@ export default function HomeScreen() {
 
         <View style={styles.grid}>
           <GlassCard style={styles.gridItem}>
-            <Text style={styles.cardLabel}>TOPLAM HARCAMA</Text>
-            <Text style={styles.metricValue}>₺{expenseTotal.toFixed(2)}</Text>
+            <Text style={styles.cardLabel}>NET BAKİYE</Text>
+            <Text style={styles.metricValue}>₺{netBalance.toFixed(2)}</Text>
           </GlassCard>
 
           <GlassCard style={styles.gridItem}>
             <Text style={styles.cardLabel}>GÜNCEL TARTI</Text>
             <Text style={styles.metricValue}>
               {latestWeight ? `${latestWeight.value} ${latestWeight.unit}` : "—"}
+            </Text>
+          </GlassCard>
+        </View>
+
+        <View style={styles.grid}>
+          <GlassCard style={styles.gridItem}>
+            <Text style={styles.cardLabel}>GÜNLÜK ADIM</Text>
+            <Text style={styles.metricValue}>
+              {latestSteps ? Math.round(latestSteps.value) : "—"}
             </Text>
           </GlassCard>
         </View>

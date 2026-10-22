@@ -1,4 +1,4 @@
--- Hepsio Life - Supabase tablo şeması
+-- Vela - Supabase tablo şeması
 -- Supabase SQL Editor'de çalıştırın.
 
 create table if not exists expenses (
