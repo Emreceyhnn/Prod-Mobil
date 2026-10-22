@@ -4,11 +4,13 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
 import GlassCard from "../components/GlassCard";
 import PrimaryButton from "../components/PrimaryButton";
+import TrendChart from "../components/TrendChart";
 import { colors, spacing, typography } from "../theme/colors";
 import {
   initHealthKit,
   syncAllHealthData,
   fetchCurrentHealthSnapshot,
+  fetchHealthMetricHistory,
 } from "../services/healthService";
 import { useBluetoothDevices } from "../services/bluetoothService";
 
@@ -24,6 +26,15 @@ function MetricTile({ label, value, unit }) {
   );
 }
 
+const TREND_METRICS = [
+  { key: "weight", label: "Kilo Trendi", unit: "kg", color: colors.metricCyan },
+  { key: "body_fat", label: "Yağ Oranı Trendi", unit: "%", color: colors.agentViolet },
+  { key: "bmi", label: "BMI Trendi", unit: "", color: colors.alertAmber },
+  { key: "lean_body_mass", label: "Yağsız Vücut Kütlesi Trendi", unit: "kg", color: colors.metricEmerald },
+  { key: "steps", label: "Adım Trendi", unit: "adım", color: colors.secondary },
+  { key: "active_energy", label: "Yakılan Kalori Trendi", unit: "kcal", color: colors.alertCoral },
+];
+
 export default function HealthScreen() {
   const { user } = useAuth();
   const [healthKitReady, setHealthKitReady] = useState(false);
@@ -34,8 +45,13 @@ export default function HealthScreen() {
     steps: null,
     activeEnergy: null,
     bodyFat: null,
+    bmi: null,
+    height: null,
+    leanBodyMass: null,
+    distance: null,
     heartRate: null,
   });
+  const [trendData, setTrendData] = useState({});
 
   const {
     devices,
@@ -56,6 +72,21 @@ export default function HealthScreen() {
     }
   }, []);
 
+  const loadTrends = useCallback(async () => {
+    if (!user) return;
+    try {
+      const entries = await Promise.all(
+        TREND_METRICS.map(async (m) => {
+          const history = await fetchHealthMetricHistory(user.id, m.key, 14);
+          return [m.key, history];
+        })
+      );
+      setTrendData(Object.fromEntries(entries));
+    } catch (e) {
+      // sessiz geç
+    }
+  }, [user]);
+
   useEffect(() => {
     if (Platform.OS === "ios") {
       initHealthKit()
@@ -67,12 +98,16 @@ export default function HealthScreen() {
     }
   }, [loadSnapshot]);
 
+  useEffect(() => {
+    loadTrends();
+  }, [loadTrends]);
+
   const handleSync = async () => {
     if (!user) return;
     setSyncing(true);
     try {
       const result = await syncAllHealthData(user.id);
-      await loadSnapshot();
+      await Promise.all([loadSnapshot(), loadTrends()]);
       if (result.errors.length > 0) {
         Alert.alert("Kısmen Tamamlandı", result.errors.join("\n"));
       }
@@ -85,7 +120,7 @@ export default function HealthScreen() {
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadSnapshot();
+    await Promise.all([loadSnapshot(), loadTrends()]);
     setRefreshing(false);
   };
 
@@ -105,9 +140,13 @@ export default function HealthScreen() {
 
           <View style={styles.grid}>
             <MetricTile label="Adım" value={snapshot.steps} unit="" />
+            <MetricTile label="Mesafe" value={snapshot.distance} unit="km" />
             <MetricTile label="Yakılan Kalori" value={snapshot.activeEnergy} unit="kcal" />
             <MetricTile label="Kilo" value={snapshot.weight} unit="kg" />
+            <MetricTile label="Boy" value={snapshot.height} unit="cm" />
+            <MetricTile label="BMI" value={snapshot.bmi} unit="" />
             <MetricTile label="Yağ Oranı" value={snapshot.bodyFat} unit="%" />
+            <MetricTile label="Yağsız Kütle" value={snapshot.leanBodyMass} unit="kg" />
             <MetricTile label="Nabız" value={snapshot.heartRate} unit="bpm" />
           </View>
 
@@ -118,6 +157,19 @@ export default function HealthScreen() {
             disabled={Platform.OS !== "ios"}
             style={{ marginTop: spacing.md }}
           />
+        </GlassCard>
+
+        <GlassCard style={styles.card}>
+          <Text style={styles.cardTitle}>Trendler (Son 14 Gün)</Text>
+          {TREND_METRICS.map((m) => (
+            <TrendChart
+              key={m.key}
+              title={m.label}
+              unit={m.unit}
+              color={m.color}
+              data={trendData[m.key]}
+            />
+          ))}
         </GlassCard>
 
         <GlassCard style={styles.card}>

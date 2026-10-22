@@ -8,9 +8,13 @@ const HEALTH_PERMISSIONS = {
   permissions: {
     read: [
       PERMS.StepCount,
+      PERMS.DistanceWalkingRunning,
       PERMS.HeartRate,
       PERMS.Weight,
+      PERMS.Height,
       PERMS.BodyFatPercentage,
+      PERMS.BodyMassIndex,
+      PERMS.LeanBodyMass,
       PERMS.SleepAnalysis,
       PERMS.ActiveEnergyBurned,
     ],
@@ -111,6 +115,61 @@ export function getLatestBodyFatPercentage() {
   });
 }
 
+export function getLatestHeight() {
+  return new Promise((resolve, reject) => {
+    const options = { unit: "cm" };
+    AppleHealthKit.getLatestHeight(options, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+export function getLatestBmi() {
+  return new Promise((resolve, reject) => {
+    AppleHealthKit.getLatestBmi(null, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+export function getLatestLeanBodyMass() {
+  return new Promise((resolve, reject) => {
+    const options = { unit: "kg" };
+    AppleHealthKit.getLatestLeanBodyMass(options, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result);
+    });
+  });
+}
+
+export function getTodayWalkingRunningDistance() {
+  return new Promise((resolve, reject) => {
+    const options = {
+      startDate: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(),
+      endDate: new Date().toISOString(),
+      unit: "km",
+    };
+    AppleHealthKit.getDistanceWalkingRunning(options, (error, result) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve(result?.value ?? 0);
+    });
+  });
+}
+
 export function getSleepSamples(startDate) {
   return new Promise((resolve, reject) => {
     const options = {
@@ -139,46 +198,50 @@ export async function syncHealthMetricToSupabase(userId, metricType, value, unit
 }
 
 export async function syncAllHealthData(userId) {
-  const results = { weight: null, steps: null, activeEnergy: null, bodyFat: null, errors: [] };
+  const results = {
+    weight: null,
+    steps: null,
+    activeEnergy: null,
+    bodyFat: null,
+    bmi: null,
+    height: null,
+    leanBodyMass: null,
+    distance: null,
+    errors: [],
+  };
 
-  try {
-    const weight = await getLatestWeight();
-    if (weight?.value) {
-      await syncHealthMetricToSupabase(userId, "weight", weight.value, "kg");
-      results.weight = weight.value;
-    }
-  } catch (e) {
-    results.errors.push("weight: " + e.message);
-  }
+  const jobs = [
+    ["weight", () => getLatestWeight().then((r) => r?.value), "kg"],
+    ["steps", () => getTodayStepCount().then((r) => r?.value), "count"],
+    ["active_energy", () => getTodayActiveEnergyBurned(), "kcal"],
+    ["body_fat", () => getLatestBodyFatPercentage().then((r) => (r?.value != null ? r.value * 100 : null)), "%"],
+    ["bmi", () => getLatestBmi().then((r) => r?.value), "index"],
+    ["height", () => getLatestHeight().then((r) => r?.value), "cm"],
+    ["lean_body_mass", () => getLatestLeanBodyMass().then((r) => r?.value), "kg"],
+    ["distance", () => getTodayWalkingRunningDistance(), "km"],
+  ];
 
-  try {
-    const steps = await getTodayStepCount();
-    if (steps?.value != null) {
-      await syncHealthMetricToSupabase(userId, "steps", steps.value, "count");
-      results.steps = steps.value;
-    }
-  } catch (e) {
-    results.errors.push("steps: " + e.message);
-  }
+  const resultKeyMap = {
+    weight: "weight",
+    steps: "steps",
+    active_energy: "activeEnergy",
+    body_fat: "bodyFat",
+    bmi: "bmi",
+    height: "height",
+    lean_body_mass: "leanBodyMass",
+    distance: "distance",
+  };
 
-  try {
-    const activeEnergy = await getTodayActiveEnergyBurned();
-    if (activeEnergy != null) {
-      await syncHealthMetricToSupabase(userId, "active_energy", activeEnergy, "kcal");
-      results.activeEnergy = activeEnergy;
+  for (const [metricType, fetcher, unit] of jobs) {
+    try {
+      const value = await fetcher();
+      if (value != null) {
+        await syncHealthMetricToSupabase(userId, metricType, value, unit);
+        results[resultKeyMap[metricType]] = value;
+      }
+    } catch (e) {
+      results.errors.push(`${metricType}: ${e.message}`);
     }
-  } catch (e) {
-    results.errors.push("active_energy: " + e.message);
-  }
-
-  try {
-    const bodyFat = await getLatestBodyFatPercentage();
-    if (bodyFat?.value) {
-      await syncHealthMetricToSupabase(userId, "body_fat", bodyFat.value * 100, "%");
-      results.bodyFat = bodyFat.value * 100;
-    }
-  } catch (e) {
-    results.errors.push("body_fat: " + e.message);
   }
 
   return results;
@@ -189,7 +252,17 @@ export async function syncAllHealthData(userId) {
  * doğrudan okur (Supabase'e yazmadan, yalnızca UI için).
  */
 export async function fetchCurrentHealthSnapshot() {
-  const snapshot = { weight: null, steps: null, activeEnergy: null, bodyFat: null, heartRate: null };
+  const snapshot = {
+    weight: null,
+    steps: null,
+    activeEnergy: null,
+    bodyFat: null,
+    bmi: null,
+    height: null,
+    leanBodyMass: null,
+    distance: null,
+    heartRate: null,
+  };
 
   await Promise.allSettled([
     getLatestWeight().then((r) => {
@@ -204,10 +277,50 @@ export async function fetchCurrentHealthSnapshot() {
     getLatestBodyFatPercentage().then((r) => {
       snapshot.bodyFat = r?.value != null ? r.value * 100 : null;
     }),
+    getLatestBmi().then((r) => {
+      snapshot.bmi = r?.value ?? null;
+    }),
+    getLatestHeight().then((r) => {
+      snapshot.height = r?.value ?? null;
+    }),
+    getLatestLeanBodyMass().then((r) => {
+      snapshot.leanBodyMass = r?.value ?? null;
+    }),
+    getTodayWalkingRunningDistance().then((v) => {
+      snapshot.distance = v;
+    }),
     getHeartRateSamples().then((samples) => {
       snapshot.heartRate = samples?.[0]?.value ?? null;
     }),
   ]);
 
   return snapshot;
+}
+
+/**
+ * Supabase health_metrics tablosundan, verilen metrik tipi için son N günün
+ * en güncel değerlerini (grafik çizimi için) getirir. Günlük bazda en son
+ * kaydı tutar.
+ */
+export async function fetchHealthMetricHistory(userId, metricType, days = 7) {
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+
+  const { data, error } = await supabase
+    .from("health_metrics")
+    .select("value, recorded_at")
+    .eq("user_id", userId)
+    .eq("metric_type", metricType)
+    .gte("recorded_at", since.toISOString())
+    .order("recorded_at", { ascending: true });
+
+  if (error) throw error;
+
+  const byDay = new Map();
+  for (const row of data || []) {
+    const day = row.recorded_at.slice(0, 10);
+    byDay.set(day, Number(row.value));
+  }
+
+  return Array.from(byDay.entries()).map(([date, value]) => ({ date, value }));
 }
