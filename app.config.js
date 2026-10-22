@@ -21,7 +21,7 @@ export default ({ config }) => ({
   assetBundlePatterns: ["**/*"],
   ios: {
     supportsTablet: false,
-    bundleIdentifier: "com.vela.app",
+    bundleIdentifier: "com.emreceyhan.vela",
     infoPlist: {
       NSHealthShareUsageDescription:
         "Vela, adım sayısı, nabız, kilo ve uyku verilerinizi okuyarak size kişisel sağlık içgörüleri sunar.",
@@ -40,7 +40,7 @@ export default ({ config }) => ({
     }
   },
   android: {
-    package: "com.vela.app",
+    package: "com.emreceyhan.vela",
     adaptiveIcon: {
       foregroundImage: "./assets/adaptive-icon.png",
       backgroundColor: "#090D16"
