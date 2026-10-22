@@ -6,17 +6,25 @@ import {
   FlatList,
   RefreshControl,
   Alert,
+  TouchableOpacity,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
 import { supabase } from "../services/supabase";
 import GlassCard from "../components/GlassCard";
-import { colors, spacing, typography } from "../theme/colors";
+import AddExpenseModal from "../components/AddExpenseModal";
+import QuickButtonEditorModal from "../components/QuickButtonEditorModal";
+import { colors, spacing, typography, radius } from "../theme/colors";
+import { getQuickButtons } from "../services/quickExpenseService";
 
 export default function FinanceScreen() {
   const { user } = useAuth();
   const [expenses, setExpenses] = useState([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [quickButtons, setQuickButtons] = useState([]);
+  const [addModalVisible, setAddModalVisible] = useState(false);
+  const [editorModalVisible, setEditorModalVisible] = useState(false);
+  const [savingQuickId, setSavingQuickId] = useState(null);
 
   const loadExpenses = useCallback(async () => {
     if (!user) return;
@@ -33,14 +41,51 @@ export default function FinanceScreen() {
     setExpenses(data || []);
   }, [user]);
 
+  const loadQuickButtons = useCallback(async () => {
+    const buttons = await getQuickButtons();
+    setQuickButtons(buttons);
+  }, []);
+
   useEffect(() => {
     loadExpenses();
-  }, [loadExpenses]);
+    loadQuickButtons();
+  }, [loadExpenses, loadQuickButtons]);
 
   const onRefresh = async () => {
     setRefreshing(true);
-    await loadExpenses();
+    await Promise.all([loadExpenses(), loadQuickButtons()]);
     setRefreshing(false);
+  };
+
+  const insertExpense = async (payload) => {
+    if (!user) return;
+    const { error } = await supabase.from("expenses").insert({
+      user_id: user.id,
+      amount: payload.amount,
+      category: payload.category,
+      merchant: payload.merchant,
+      source: payload.source,
+      raw_text: payload.raw_text || null,
+      created_at: new Date().toISOString(),
+    });
+    if (error) throw error;
+    await loadExpenses();
+  };
+
+  const handleQuickButtonPress = async (button) => {
+    setSavingQuickId(button.id);
+    try {
+      await insertExpense({
+        amount: -Math.abs(button.amount),
+        category: button.category,
+        merchant: button.label,
+        source: "quick_button",
+      });
+    } catch (e) {
+      Alert.alert("Hata", e.message);
+    } finally {
+      setSavingQuickId(null);
+    }
   };
 
   const { income, outcome, net, categoryTotals } = useMemo(() => {
@@ -73,7 +118,41 @@ export default function FinanceScreen() {
         keyExtractor={(item) => String(item.id)}
         ListHeaderComponent={
           <View>
-            <Text style={styles.title}>Finans</Text>
+            <View style={styles.headerRow}>
+              <Text style={styles.title}>Finans</Text>
+              <TouchableOpacity style={styles.addButton} onPress={() => setAddModalVisible(true)}>
+                <Text style={styles.addButtonText}>+ Yeni Ekle</Text>
+              </TouchableOpacity>
+            </View>
+
+            <GlassCard style={styles.totalCard}>
+              <View style={styles.quickHeader}>
+                <Text style={styles.quickTitle}>⚡ Hızlı Butonlarım</Text>
+                <TouchableOpacity onPress={() => setEditorModalVisible(true)}>
+                  <Text style={styles.quickEdit}>+ Ekle / Düzenle</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={styles.quickGrid}>
+                {quickButtons.map((btn) => (
+                  <TouchableOpacity
+                    key={btn.id}
+                    style={styles.quickButton}
+                    onPress={() => handleQuickButtonPress(btn)}
+                    disabled={savingQuickId === btn.id}
+                  >
+                    <Text style={styles.quickEmoji}>{btn.emoji}</Text>
+                    <Text style={styles.quickLabel}>{btn.label}</Text>
+                    <Text style={styles.quickAmount}>
+                      {savingQuickId === btn.id ? "..." : `₺${btn.amount}`}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+                <TouchableOpacity style={styles.quickButtonAdd} onPress={() => setEditorModalVisible(true)}>
+                  <Text style={styles.quickAddPlus}>+</Text>
+                  <Text style={styles.quickAddLabel}>Yeni Ekle</Text>
+                </TouchableOpacity>
+              </View>
+            </GlassCard>
 
             <GlassCard style={styles.totalCard}>
               <Text style={styles.totalLabel}>NET BAKİYE</Text>
@@ -132,6 +211,17 @@ export default function FinanceScreen() {
           <Text style={styles.empty}>Henüz işlem kaydı yok.</Text>
         }
       />
+
+      <AddExpenseModal
+        visible={addModalVisible}
+        onClose={() => setAddModalVisible(false)}
+        onSubmit={insertExpense}
+      />
+      <QuickButtonEditorModal
+        visible={editorModalVisible}
+        onClose={() => setEditorModalVisible(false)}
+        onChanged={loadQuickButtons}
+      />
     </SafeAreaView>
   );
 }
@@ -139,8 +229,54 @@ export default function FinanceScreen() {
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: colors.surfaceBase },
   container: { padding: spacing.md, paddingBottom: spacing.xl * 2 },
-  title: { ...typography.headlineMd, color: colors.textPrimary, marginBottom: spacing.md },
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.md,
+  },
+  title: { ...typography.headlineMd, color: colors.textPrimary },
+  addButton: {
+    backgroundColor: colors.primaryContainer,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: radius.full,
+  },
+  addButtonText: { ...typography.labelMd, color: colors.textPrimary, fontWeight: "700" },
   totalCard: { marginBottom: spacing.md },
+  quickHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: spacing.sm,
+  },
+  quickTitle: { ...typography.labelCaps, color: colors.alertAmber, letterSpacing: 0.5 },
+  quickEdit: { ...typography.bodySm, color: colors.primary },
+  quickGrid: { flexDirection: "row", flexWrap: "wrap", gap: spacing.sm },
+  quickButton: {
+    flexBasis: "30%",
+    flexGrow: 1,
+    backgroundColor: colors.surfaceContainerLowest,
+    borderRadius: radius.md,
+    padding: spacing.sm,
+    alignItems: "center",
+  },
+  quickEmoji: { fontSize: 22, marginBottom: 4 },
+  quickLabel: { ...typography.bodySm, color: colors.textPrimary, textAlign: "center" },
+  quickAmount: { ...typography.labelMd, color: colors.secondary, fontWeight: "700", marginTop: 2 },
+  quickButtonAdd: {
+    flexBasis: "30%",
+    flexGrow: 1,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderStyle: "dashed",
+    borderColor: colors.borderGlass,
+    alignItems: "center",
+    justifyContent: "center",
+    paddingVertical: spacing.sm,
+  },
+  quickAddPlus: { ...typography.headlineSm, color: colors.secondary },
+  quickAddLabel: { ...typography.bodySm, color: colors.textSecondary },
   totalLabel: { ...typography.labelCaps, color: colors.metricCyan, marginBottom: spacing.xs },
   totalValue: { ...typography.displayHeroMobile, color: colors.textPrimary, marginBottom: spacing.sm },
   splitRow: { flexDirection: "row", gap: spacing.md },
