@@ -115,6 +115,33 @@ export function getLatestBodyFatPercentage() {
   });
 }
 
+/**
+ * HealthKit'in BodyFatPercentage değeri standart olarak 0-1 arası fraksiyon
+ * döner (ör. 0.245 = %24.5), ama bazı üçüncü parti app'ler (ör. akıllı
+ * baskül app'leri) buraya doğrudan yüzde değeri (24.5) yazabiliyor.
+ * Bu fonksiyon her iki durumu da makul bir %0-100 aralığına normalize eder
+ * ve mantıksız değerleri (negatif, >100) null'a çevirir.
+ */
+function normalizeBodyFatPercentage(rawValue) {
+  if (rawValue == null) return null;
+  const asPercent = rawValue <= 1 ? rawValue * 100 : rawValue;
+  if (asPercent < 0 || asPercent > 100) return null;
+  return asPercent;
+}
+
+/**
+ * Yağsız vücut kütlesi (lean body mass) fiziksel olarak toplam kiloyu
+ * aşamaz. totalWeightKg verilirse bu kurala göre doğrular, aksi halde
+ * yalnızca negatif/aşırı büyük değerleri (örn. birim hatasıyla gelen
+ * lb->kg karışıklığı) eler.
+ */
+function normalizeLeanBodyMass(rawValue, totalWeightKg) {
+  if (rawValue == null || rawValue <= 0) return null;
+  if (totalWeightKg != null && rawValue > totalWeightKg) return null;
+  if (rawValue > 300) return null;
+  return rawValue;
+}
+
 export function getLatestHeight() {
   return new Promise((resolve, reject) => {
     const options = { unit: "cm" };
@@ -210,19 +237,34 @@ export async function syncAllHealthData(userId) {
     errors: [],
   };
 
+  // Weight önce çekilir, lean body mass'ı doğrulamak için gerekli
+  let weightValue = null;
+  try {
+    const weight = await getLatestWeight();
+    weightValue = weight?.value ?? null;
+    if (weightValue != null) {
+      await syncHealthMetricToSupabase(userId, "weight", weightValue, "kg");
+      results.weight = weightValue;
+    }
+  } catch (e) {
+    results.errors.push(`weight: ${e.message}`);
+  }
+
   const jobs = [
-    ["weight", () => getLatestWeight().then((r) => r?.value), "kg"],
     ["steps", () => getTodayStepCount().then((r) => r?.value), "count"],
     ["active_energy", () => getTodayActiveEnergyBurned(), "kcal"],
-    ["body_fat", () => getLatestBodyFatPercentage().then((r) => (r?.value != null ? r.value * 100 : null)), "%"],
+    ["body_fat", () => getLatestBodyFatPercentage().then((r) => normalizeBodyFatPercentage(r?.value)), "%"],
     ["bmi", () => getLatestBmi().then((r) => r?.value), "index"],
     ["height", () => getLatestHeight().then((r) => r?.value), "cm"],
-    ["lean_body_mass", () => getLatestLeanBodyMass().then((r) => r?.value), "kg"],
+    [
+      "lean_body_mass",
+      () => getLatestLeanBodyMass().then((r) => normalizeLeanBodyMass(r?.value, weightValue)),
+      "kg",
+    ],
     ["distance", () => getTodayWalkingRunningDistance(), "km"],
   ];
 
   const resultKeyMap = {
-    weight: "weight",
     steps: "steps",
     active_energy: "activeEnergy",
     body_fat: "bodyFat",
@@ -264,10 +306,11 @@ export async function fetchCurrentHealthSnapshot() {
     heartRate: null,
   };
 
+  // Weight önce okunur; lean body mass'ı kiloya göre doğrulamak için gerekli
+  const weightResult = await getLatestWeight().catch(() => null);
+  snapshot.weight = weightResult?.value ?? null;
+
   await Promise.allSettled([
-    getLatestWeight().then((r) => {
-      snapshot.weight = r?.value ?? null;
-    }),
     getTodayStepCount().then((r) => {
       snapshot.steps = r?.value ?? null;
     }),
@@ -275,7 +318,7 @@ export async function fetchCurrentHealthSnapshot() {
       snapshot.activeEnergy = v;
     }),
     getLatestBodyFatPercentage().then((r) => {
-      snapshot.bodyFat = r?.value != null ? r.value * 100 : null;
+      snapshot.bodyFat = normalizeBodyFatPercentage(r?.value);
     }),
     getLatestBmi().then((r) => {
       snapshot.bmi = r?.value ?? null;
@@ -284,7 +327,7 @@ export async function fetchCurrentHealthSnapshot() {
       snapshot.height = r?.value ?? null;
     }),
     getLatestLeanBodyMass().then((r) => {
-      snapshot.leanBodyMass = r?.value ?? null;
+      snapshot.leanBodyMass = normalizeLeanBodyMass(r?.value, snapshot.weight);
     }),
     getTodayWalkingRunningDistance().then((v) => {
       snapshot.distance = v;

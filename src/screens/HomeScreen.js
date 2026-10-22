@@ -83,7 +83,7 @@ export default function HomeScreen() {
           <GlassCard style={styles.gridItem}>
             <Text style={styles.cardLabel}>GÜNCEL TARTI</Text>
             <Text style={styles.metricValue}>
-              {latestWeight ? `${latestWeight.value} ${latestWeight.unit}` : "—"}
+              {latestWeight ? `${(Math.round(latestWeight.value * 10) / 10).toFixed(1)} ${latestWeight.unit}` : "—"}
             </Text>
           </GlassCard>
         </View>
